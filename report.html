@@ -237,7 +237,7 @@
 
   <script>
     /* ======================== CONFIG ======================== */
-    const LOCKED_PROGRAMS = ['p365','colab365','cio','dc'];
+    const LOCKED_PROGRAMS = ['p365','colab365','cio','dc','xman'];
     const TEXT_BOX_MAX_HEIGHT = 360;
     let pageControlCounter = 0;
 
@@ -941,7 +941,7 @@
       }
     }
 
-    const skipAssessmentChartsForPrograms = ['cio', 'xman', 'ux'];
+    const skipAssessmentChartsForPrograms = ['cio', 'xman', 'ux', 'dc'];
 
     async function build() {
       const f = JSON.parse(localStorage.getItem('reportFilters') || '{}');
