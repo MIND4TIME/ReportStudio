@@ -589,6 +589,18 @@
       "sort order": ""
     },
     {
+      "QUESTION ID": "DC",
+      "LABEL": "",
+      "": "",
+      "sort order": ""
+    },
+    {
+      "QUESTION ID": "01. How would you, globally, rate your ability to communicate?",
+      "LABEL": "COMUNICAÇÃO",
+      "": "",
+      "sort order": 1
+    },
+    {
       "QUESTION ID": "01. Considero que o programa teve impacto: tenho maior visibilidade sobre os meus projetos (timings, deliverables, milestones).",
       "LABEL": "VISIBILIDADE",
       "": "",
