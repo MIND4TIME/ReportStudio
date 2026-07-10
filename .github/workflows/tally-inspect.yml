@@ -1,0 +1,20 @@
+name: Inspecionar API do Tally (diagnóstico)
+
+# Manual apenas. Imprime nos logs o formato real das forms e de uma
+# submissão, para afinar o gerador. Read-only: não escreve nada.
+
+on:
+  workflow_dispatch:
+
+jobs:
+  inspect:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+      - name: Inspecionar
+        env:
+          TALLY_API_KEY: ${{ secrets.TALLY_API_KEY }}
+        run: node generator/inspect.mjs
