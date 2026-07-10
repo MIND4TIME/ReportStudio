@@ -1,15 +1,21 @@
 name: Gerar data.json (Tally)
 
-# Puxa as submissões de todas as forms do Tally, normaliza e commita o
-# data.json. Corre agendado e a pedido. Forms novas são apanhadas sozinhas.
+# Puxa as submissões de todas as forms do Tally, normaliza e (opcional)
+# commita o data.json. Enquanto validamos, corre só MANUALMENTE e em
+# dry-run por omissão — não escreve nada. O agendamento liga-se depois.
 
 on:
-  schedule:
-    - cron: "0 * * * *"     # de hora a hora
-  workflow_dispatch:         # correr manualmente no separador Actions
+  workflow_dispatch:
+    inputs:
+      write:
+        description: "Escrever e commitar o data.json? (deixa 'false' para testar)"
+        type: boolean
+        default: false
+  # schedule:                # ligar depois de validado
+  #   - cron: "0 * * * *"
 
 permissions:
-  contents: write            # necessário para commitar o data.json
+  contents: write
 
 jobs:
   generate:
@@ -20,13 +26,18 @@ jobs:
         with:
           node-version: "20"
 
-      - name: Gerar data.json
+      - name: Gerar (dry-run)
+        if: ${{ inputs.write == false }}
         env:
           TALLY_API_KEY: ${{ secrets.TALLY_API_KEY }}
-        run: node generator/generate-data.mjs
+        run: node generator/generate-data.mjs --dry-run
 
-      - name: Commit se mudou
+      - name: Gerar e commitar
+        if: ${{ inputs.write == true }}
+        env:
+          TALLY_API_KEY: ${{ secrets.TALLY_API_KEY }}
         run: |
+          node generator/generate-data.mjs
           if [[ -n "$(git status --porcelain data.json)" ]]; then
             git config user.name  "github-actions[bot]"
             git config user.email "github-actions[bot]@users.noreply.github.com"
