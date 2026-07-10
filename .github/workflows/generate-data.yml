@@ -1,0 +1,38 @@
+name: Gerar data.json (Tally)
+
+# Puxa as submissões de todas as forms do Tally, normaliza e commita o
+# data.json. Corre agendado e a pedido. Forms novas são apanhadas sozinhas.
+
+on:
+  schedule:
+    - cron: "0 * * * *"     # de hora a hora
+  workflow_dispatch:         # correr manualmente no separador Actions
+
+permissions:
+  contents: write            # necessário para commitar o data.json
+
+jobs:
+  generate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - name: Gerar data.json
+        env:
+          TALLY_API_KEY: ${{ secrets.TALLY_API_KEY }}
+        run: node generator/generate-data.mjs
+
+      - name: Commit se mudou
+        run: |
+          if [[ -n "$(git status --porcelain data.json)" ]]; then
+            git config user.name  "github-actions[bot]"
+            git config user.email "github-actions[bot]@users.noreply.github.com"
+            git add data.json
+            git commit -m "Atualização automática do data.json (Tally)"
+            git push
+          else
+            echo "Sem alterações."
+          fi

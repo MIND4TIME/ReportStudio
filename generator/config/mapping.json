@@ -1,0 +1,15 @@
+{
+  "_comment": "Config do gerador (substitui o hardcode). section/lang são derivados do nome da form; usa overrides quando o nome não chega. clientRawOverrides trata os client_raw sujos do histórico.",
+
+  "formOverrides": {
+    "_exemplo_formId": { "program": "P365", "section": "evaluation", "lang": "pt" }
+  },
+
+  "_clientRawOverrides_comment": "Casos sujos do histórico sem formato parseável. Preencher se/quando surgirem em dados novos.",
+  "clientRawOverrides": {},
+
+  "sectionSynonyms": {
+    "evaluation": ["evaluation", "avaliacao", "avaliação"],
+    "assessment": ["assessment", "diagnostico", "diagnóstico"]
+  }
+}
