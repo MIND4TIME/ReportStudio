@@ -23,6 +23,8 @@ Edge Function `ingest`  ──►  Postgres (tabela `responses`)
 | `schema.sql` | Tabelas (`responses`, `form_map`, `archived`), views públicas e permissões |
 | `functions/ingest/index.ts` | Edge Function: webhook do Tally → normaliza → upsert idempotente |
 | `scripts/backfill.mjs` | Importa o `data.json` atual para `responses` (carga única) |
+| `scripts/sync-webhooks.mjs` | Anexa o webhook a todas as forms do Tally, automaticamente |
+| `../.github/workflows/tally-webhook-sync.yml` | Corre o sync a cada 30 min (novas forms ficam cobertas sozinhas) |
 
 ## Setup (uma vez)
 
@@ -44,8 +46,16 @@ Edge Function `ingest`  ──►  Postgres (tabela `responses`)
    supabase functions deploy ingest --no-verify-jwt
    supabase secrets set TALLY_SIGNING_SECRET=<segredo_do_tally>
    ```
-6. **Webhook no Tally**: Integrations → Webhooks → URL da função
-   (`https://<ref>.functions.supabase.co/ingest`) + o mesmo signing secret.
+6. **Webhooks no Tally — automático** (não é preciso adicionar form a form):
+   Define os *secrets* no GitHub (`Settings → Secrets → Actions`):
+   `TALLY_API_KEY`, `INGEST_URL` (= `https://<ref>.functions.supabase.co/ingest`),
+   `TALLY_SIGNING_SECRET`. A Action `tally-webhook-sync` corre a cada 30 min e
+   anexa o webhook a qualquer form que ainda não o tenha — incluindo forms novas.
+   Testar primeiro sem escrever:
+   ```bash
+   TALLY_API_KEY=... INGEST_URL=... TALLY_SIGNING_SECRET=... \
+     node backend/scripts/sync-webhooks.mjs --dry-run
+   ```
 
 ## Cutover do frontend (fase final)
 

@@ -1,0 +1,24 @@
+name: Tally webhook sync
+
+# Garante que todas as forms do Tally (incluindo novas) têm o webhook
+# a apontar para a função `ingest`. Corre de forma agendada e a pedido.
+
+on:
+  schedule:
+    - cron: "*/30 * * * *"   # a cada 30 minutos
+  workflow_dispatch:          # permite correr manualmente no separador Actions
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+      - name: Sync webhooks
+        env:
+          TALLY_API_KEY: ${{ secrets.TALLY_API_KEY }}
+          INGEST_URL: ${{ secrets.INGEST_URL }}
+          TALLY_SIGNING_SECRET: ${{ secrets.TALLY_SIGNING_SECRET }}
+        run: node backend/scripts/sync-webhooks.mjs
