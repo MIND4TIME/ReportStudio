@@ -8,10 +8,15 @@ const API = "https://api.tally.so";
 if (!TOKEN) { console.error("Falta TALLY_API_KEY."); process.exit(1); }
 const H = { Authorization: `Bearer ${TOKEN}` };
 
-const get = async (p) => {
-  const r = await fetch(`${API}${p}`, { headers: H });
-  const t = await r.text();
-  try { return { status: r.status, json: JSON.parse(t) }; } catch { return { status: r.status, text: t.slice(0,150) }; }
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+const get = async (p, tries = 3) => {
+  for (let i = 0; i < tries; i++) {
+    const r = await fetch(`${API}${p}`, { headers: H });
+    if (r.status === 429) { await sleep(1500); continue; }
+    const t = await r.text();
+    try { return { status: r.status, json: JSON.parse(t) }; } catch { return { status: r.status, text: t.slice(0, 200) }; }
+  }
+  return { status: 429, text: "rate limited" };
 };
 const clip = (s, n = 55) => String(s ?? "").replace(/\s+/g, " ").slice(0, n);
 
@@ -24,10 +29,13 @@ function findClient(sub) {
   return undefined;
 }
 
-const forms = (await get("/forms?page=1&limit=100")).json?.forms ?? [];
+const fr = await get("/forms?page=1&limit=100");
+console.log("GET /forms status:", fr.status, "keys:", fr.json ? Object.keys(fr.json).join(",") : fr.text);
+const forms = fr.json?.forms ?? [];
 console.log(`\n=== ${forms.length} FORMS ===`);
 const semClient = [];
 for (const f of forms) {
+  await sleep(200);
   const d = await get(`/forms/${f.id}/submissions?page=1&limit=3`);
   const subs = d.json?.submissions ?? [];
   const total = d.json?.totalNumberOfSubmissionsPerFilter ?? subs.length;
