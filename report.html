@@ -177,6 +177,19 @@
     #width-panel input[type="range"]{ flex:1; }
     #width-panel .actions{ display:flex; gap:8px; margin-top:10px; flex-wrap:wrap; }
     #width-panel button{ border:1px solid #ddd; background:#fff; padding:6px 10px; border-radius:4px; cursor:pointer; font-size:12px; }
+
+    /* Tabela de avaliações individuais por participante */
+    .participant-table-page .content { display:flex; flex-direction:column; }
+    .eval-table-wrap { width:100%; height:100%; box-sizing:border-box; padding:14px 26px; display:flex; flex-direction:column; overflow:hidden; }
+    .eval-table-title { text-align:center; font-size:1.15rem; font-weight:700; color:#27828C; margin:2px 0 12px; letter-spacing:0.02em; }
+    .eval-table-scroll { flex:1; overflow:auto; }
+    .eval-table { border-collapse:collapse; width:100%; font-size:12px; color:#222; }
+    .eval-table th, .eval-table td { border:1px solid #cfe0e1; padding:4px 6px; text-align:center; }
+    .eval-table thead th { background:#27828C; color:#fff; font-weight:600; }
+    .eval-table td.participant, .eval-table th.participant { text-align:left; white-space:nowrap; }
+    .eval-table tbody tr:nth-child(even) td { background:#f3f9f9; }
+    .eval-table td.avg-col, .eval-table th.avg-col { font-weight:700; background:#eaf5f5; }
+    .eval-table tfoot td { font-weight:700; background:#dff0f0; color:#1c6b70; }
   </style>
 </head>
 <body>
@@ -943,6 +956,153 @@
 
     const skipAssessmentChartsForPrograms = ['cio', 'xman', 'ux'];
 
+    /* ======================== TABELA DE AVALIAÇÕES INDIVIDUAIS ======================== */
+    // Cabeçalho curto para cada pergunta (usa rótulo do meta, ou o número da pergunta)
+    function shortEvalHeader(qid, LM) {
+      const lbl = LM[qid];
+      if (lbl && String(lbl).trim()) return String(lbl).trim();
+      const m = String(qid).match(/^\s*(\d+)/);
+      if (m) return m[1].padStart(2, '0');
+      return String(qid).slice(0, 12);
+    }
+
+    // Recolhe os participantes (por submissão) e as suas avaliações numéricas por pergunta
+    function collectParticipantEvalData(evalRows, OM) {
+      const numeric = evalRows.filter(d => /^\d+(\.\d+)?$/.test(String(d.value).trim()));
+      if (!numeric.length) return null;
+
+      // perguntas distintas, ordenadas pela ordem definida no meta
+      const qOrder = [];
+      const seenQ = new Set();
+      numeric.forEach(r => { if (!seenQ.has(r.question)) { seenQ.add(r.question); qOrder.push(r.question); } });
+      qOrder.sort((a, b) => ((OM[a] ?? 9999) - (OM[b] ?? 9999)));
+
+      // participantes (ordem de aparição)
+      const subs = {};
+      const order = [];
+      evalRows.forEach(r => {
+        const id = normalizeId(r);
+        if (!id) return;
+        if (!subs[id]) { subs[id] = { name: null, scores: {} }; order.push(id); }
+      });
+      // nomes: aceita "00. Nome"/"00. Name", ou "Primeiro nome"+"Último nome" / "First Name"+"Last Name"
+      const stripAcc = s => String(s || '').normalize('NFD').replace(/[\u0300-\u036f]/g, '');
+      const nameParts = {}; // id -> {full, first, last}
+      evalRows.forEach(r => {
+        const val = String(r.value == null ? '' : r.value).trim();
+        if (!val || /^\d+(\.\d+)?$/.test(val)) return;
+        const id = normalizeId(r);
+        if (!subs[id]) return;
+        const qn = stripAcc(String(r.question)).toLowerCase().trim();
+        const parts = (nameParts[id] ||= { full: '', first: '', last: '' });
+        if (/^(\d+\.?\s*)?(nome|name)$/.test(qn)) parts.full = parts.full || val;
+        else if (qn.includes('primeiro nome') || qn.includes('first name')) parts.first = parts.first || val;
+        else if (qn.includes('ultimo nome') || qn.includes('last name')) parts.last = parts.last || val;
+      });
+      Object.keys(nameParts).forEach(id => {
+        const p = nameParts[id];
+        const nm = (p.full || [p.first, p.last].filter(Boolean).join(' ')).trim();
+        if (nm && subs[id]) subs[id].name = nm;
+      });
+      // pontuações
+      numeric.forEach(r => {
+        const id = normalizeId(r);
+        if (subs[id]) subs[id].scores[r.question] = +r.value;
+      });
+
+      // apenas participantes com pelo menos uma pontuação numérica
+      const participants = order
+        .filter(id => Object.keys(subs[id].scores).length)
+        .map((id, i) => {
+          const s = subs[id];
+          const vals = qOrder.map(q => s.scores[q]).filter(v => Number.isFinite(v));
+          const avg = vals.length ? +(vals.reduce((a, b) => a + b, 0) / vals.length).toFixed(1) : null;
+          return { name: s.name || `Participante ${i + 1}`, scores: s.scores, avg };
+        });
+
+      if (!participants.length) return null;
+      return { qOrder, participants };
+    }
+
+    function createParticipantTablePage(prog, turma, evalRows, LM, OM) {
+      const collected = collectParticipantEvalData(evalRows, OM);
+      if (!collected) return null;
+      const { qOrder, participants } = collected;
+
+      const headerCells = qOrder.map(q => {
+        const h = shortEvalHeader(q, LM);
+        const full = String(q).replace(/"/g, '&quot;');
+        return `<th title="${full}">${h}</th>`;
+      }).join('');
+
+      const bodyRows = participants.map(p => {
+        const cells = qOrder.map(q => {
+          const v = p.scores[q];
+          return `<td>${Number.isFinite(v) ? v : '—'}</td>`;
+        }).join('');
+        const name = String(p.name).replace(/</g, '&lt;');
+        return `<tr><td class="participant">${name}</td>${cells}<td class="avg-col">${p.avg ?? '—'}</td></tr>`;
+      }).join('');
+
+      // média da turma por pergunta
+      const footCells = qOrder.map(q => {
+        const vals = participants.map(p => p.scores[q]).filter(v => Number.isFinite(v));
+        const m = vals.length ? (vals.reduce((a, b) => a + b, 0) / vals.length).toFixed(1) : '—';
+        return `<td>${m}</td>`;
+      }).join('');
+      const allAvgs = participants.map(p => p.avg).filter(v => Number.isFinite(v));
+      const globalAvg = allAvgs.length ? (allAvgs.reduce((a, b) => a + b, 0) / allAvgs.length).toFixed(1) : '—';
+
+      const page = document.createElement('div');
+      page.className = 'page participant-table-page';
+      page.dataset.prog = prog;
+      page.dataset.turma = turma || '';
+      const turmaLabel = turma ? ` — ${turma}` : '';
+      page.innerHTML = `
+        <div class="header">
+          <img src="logo-branco.png">
+          <div class="section-title">Avaliação</div>
+        </div>
+        <div class="content">
+          <div class="eval-table-wrap">
+            <div class="eval-table-title" contenteditable="true" spellcheck="true">Avaliações Individuais${turmaLabel}</div>
+            <div class="eval-table-scroll">
+              <table class="eval-table">
+                <thead>
+                  <tr><th class="participant">Participante</th>${headerCells}<th class="avg-col">Média</th></tr>
+                </thead>
+                <tbody>${bodyRows}</tbody>
+                <tfoot>
+                  <tr><td class="participant">Média da turma</td>${footCells}<td class="avg-col">${globalAvg}</td></tr>
+                </tfoot>
+              </table>
+            </div>
+          </div>
+        </div>`;
+      return page;
+    }
+
+    // Constrói as tabelas de avaliações individuais e insere-as como primeiros slides do report
+    function buildParticipantEvalTables(root, data, f, LM, OM) {
+      for (const prog of f.programs || []) {
+        const selTur = f[`turmas_${prog}`] || [];
+        const rows = data.filter(d =>
+          (f.clients || []).includes(d.client) &&
+          d.program === prog &&
+          (f.clientInfos || []).includes(d.client_info) &&
+          (!selTur.length || selTur.includes(d.turma))
+        );
+        const evalRows = rows.filter(d => String(d.section || '').toLowerCase().includes('evaluation'));
+        if (!evalRows.length) continue;
+
+        const byTurma = groupBy(evalRows, 'turma');
+        Object.keys(byTurma).sort().forEach(turma => {
+          const page = createParticipantTablePage(prog, turma, byTurma[turma], LM, OM);
+          if (page) root.appendChild(page);
+        });
+      }
+    }
+
     async function build() {
       const f = JSON.parse(localStorage.getItem('reportFilters') || '{}');
       const [data, meta] = await Promise.all([
@@ -953,6 +1113,9 @@
       const root = document.getElementById('report');
       root.innerHTML = '';
       window.__chartCtx = {};
+
+      // Primeiros slides: tabela de avaliações individuais por turma
+      buildParticipantEvalTables(root, data, f, LM, OM);
 
       for (const prog of f.programs || []) {
         const progId = (prog||'').toLowerCase();
@@ -1389,6 +1552,61 @@
       return true;
     }
 
+    function renderParticipantTableSlideEditable(slide, pg, shapeTypes) {
+      if (!pg.classList.contains('participant-table-page')) return false;
+      const tableEl = pg.querySelector('.eval-table');
+      if (!tableEl) return false;
+
+      const sectionTitle = extractText(pg, '.section-title', 'Avaliação');
+      const tableTitle = extractText(pg, '.eval-table-title', 'Avaliações Individuais');
+      const headerLogo = pg.querySelector('.header img');
+
+      slide.background = { color: 'FFFFFF' };
+      slide.addShape(shapeTypes.rect, { x: 0, y: 0, w: 10, h: 0.52, fill: { color: '3EA2AA' }, line: { color: '3EA2AA' } });
+      addImageContain(slide, headerLogo, { x: 0.16, y: 0.03, w: 1.65, h: 0.45 });
+      slide.addText(sectionTitle.toUpperCase(), { x: 0.4, y: 0.12, w: 9.2, h: 0.25, align: 'right', bold: true, color: 'FFFFFF', fontFace: PPT_FONT, fontSize: 12 });
+      slide.addText(tableTitle, { x: 0.55, y: 0.72, w: 8.9, h: 0.4, align: 'center', bold: true, color: '27828C', fontFace: PPT_FONT, fontSize: 18 });
+
+      // Construir as linhas a partir da tabela HTML
+      const headerThs = Array.from(tableEl.querySelectorAll('thead th'));
+      const bodyTrs = Array.from(tableEl.querySelectorAll('tbody tr'));
+      const footTrs = Array.from(tableEl.querySelectorAll('tfoot tr'));
+      const ncols = headerThs.length;
+      if (!ncols) return true;
+
+      const cellText = td => (td.textContent || '').trim();
+      const headerRow = headerThs.map((th, i) => ({
+        text: cellText(th),
+        options: { bold: true, color: 'FFFFFF', fill: { color: '27828C' }, align: i === 0 ? 'left' : 'center', valign: 'middle' }
+      }));
+      const dataRows = bodyTrs.map(tr => Array.from(tr.children).map((td, i) => ({
+        text: cellText(td),
+        options: { align: i === 0 ? 'left' : 'center', valign: 'middle', color: '222222' }
+      })));
+      const footerRows = footTrs.map(tr => Array.from(tr.children).map((td, i) => ({
+        text: cellText(td),
+        options: { bold: true, align: i === 0 ? 'left' : 'center', valign: 'middle', color: '1C6B70', fill: { color: 'DFF0F0' } }
+      })));
+      const rows = [headerRow, ...dataRows, ...footerRows];
+
+      // Larguras: primeira coluna (nome) mais larga, restantes iguais
+      const totalW = 9.0;
+      const firstW = Math.min(2.4, totalW * 0.28);
+      const restW = (totalW - firstW) / Math.max(1, ncols - 1);
+      const colW = [firstW, ...Array(ncols - 1).fill(restW)];
+
+      const nrows = rows.length;
+      const fontSize = nrows > 16 ? 8 : nrows > 12 ? 9 : 10;
+
+      slide.addTable(rows, {
+        x: 0.5, y: 1.25, w: totalW, colW,
+        fontFace: PPT_FONT, fontSize,
+        border: { type: 'solid', pt: 0.5, color: 'CFE0E1' },
+        align: 'center', valign: 'middle', autoPage: false
+      });
+      return true;
+    }
+
     function renderTextSlideEditable(slide, pg, shapeTypes) {
       if (!pg.classList.contains('text-page')) return false;
       const sectionTitle = extractText(pg, '.section-title', '');
@@ -1496,6 +1714,7 @@
         const allPages = getVisibleReportPages();
         allPages.forEach(pg => {
           const slide = pptx.addSlide();
+          if (renderParticipantTableSlideEditable(slide, pg, shapeTypes)) return;
           if (renderChartSlideEditable(slide, pg, shapeTypes)) return;
           if (renderTextSlideEditable(slide, pg, shapeTypes)) return;
           if (renderHeroOrBannerSlideEditable(slide, pg, shapeTypes)) return;
