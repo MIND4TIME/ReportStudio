@@ -1,62 +1,49 @@
 #!/usr/bin/env node
-// Diagnóstico read-only: varre TODAS as forms e mostra, por form, se traz o
-// campo escondido `client` e que valor tem; e faz deep-dive numa que NÃO traga.
+// Diagnóstico read-only focado: para forms específicas, mostra onde está o
+// cliente — respostas com answer em objeto (campos escondidos) e perguntas
+// cujo título parece cliente/empresa. Não escreve nada.
 //   TALLY_API_KEY=... node generator/inspect.mjs
 
 const TOKEN = process.env.TALLY_API_KEY;
 const API = "https://api.tally.so";
 if (!TOKEN) { console.error("Falta TALLY_API_KEY."); process.exit(1); }
 const H = { Authorization: `Bearer ${TOKEN}` };
-
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
-const get = async (p, tries = 3) => {
-  for (let i = 0; i < tries; i++) {
+const get = async (p) => {
+  for (let i = 0; i < 4; i++) {
     const r = await fetch(`${API}${p}`, { headers: H });
     if (r.status === 429) { await sleep(1500); continue; }
     const t = await r.text();
-    try { return { status: r.status, json: JSON.parse(t) }; } catch { return { status: r.status, text: t.slice(0, 200) }; }
+    try { return JSON.parse(t); } catch { return { _raw: t.slice(0, 200), _status: r.status }; }
   }
-  return { status: 429, text: "rate limited" };
+  return { _status: 429 };
 };
-const clip = (s, n = 55) => String(s ?? "").replace(/\s+/g, " ").slice(0, n);
+const clip = (s, n = 45) => String(s ?? "").replace(/\s+/g, " ").slice(0, n);
 
-// extrai o "client_raw" de uma submissão: 1ª resposta cujo answer é objeto com 'client'
-function findClient(sub) {
-  for (const r of sub.responses ?? []) {
+// AVALIAÇÃO, P365 assessment [PT] (funciona), MKT avaliação, P365 ESTEVE
+const TARGETS = { "3Epee2": "AVALIAÇÃO", "mDbe1p": "P365 assessment [PT]", "mOyNAY": "MKT avaliação [PT]", "3NKBZl": "P365 ESTEVE avaliação [EN]" };
+
+for (const [fid, name] of Object.entries(TARGETS)) {
+  await sleep(300);
+  const d = await get(`/forms/${fid}/submissions?page=1&limit=2`);
+  const qmap = {}; (d.questions ?? []).forEach((q) => { qmap[q.id] = q.title ?? q.label; });
+  const subs = d.submissions ?? [];
+  console.log(`\n=== ${name} (${fid}) · subs=${d.totalNumberOfSubmissionsPerFilter ?? subs.length} ===`);
+  // perguntas com título tipo cliente/empresa
+  const clientQs = (d.questions ?? []).filter((q) => /client|empresa|company|organiza|nome/i.test(q.title ?? q.label ?? ""));
+  console.log("perguntas tipo cliente:", clientQs.map((q) => `${q.id}:${clip(q.title ?? q.label, 25)}`).join(" | ") || "nenhuma");
+  const s0 = subs[0];
+  if (!s0) { console.log("(sem submissões)"); continue; }
+  // respostas cujo answer é objeto (campos escondidos / estruturados)
+  for (const r of s0.responses ?? []) {
     const a = r.answer;
-    if (a && typeof a === "object" && !Array.isArray(a) && "client" in a) return a.client;
+    if (a && typeof a === "object") {
+      console.log(`  [OBJ] ${r.questionId} | ${clip(qmap[r.questionId] ?? "?", 25)} = ${JSON.stringify(a).slice(0, 120)}`);
+    }
   }
-  return undefined;
-}
-
-const fr = await get("/forms?page=1&limit=100");
-console.log("GET /forms status:", fr.status, "keys:", fr.json ? Object.keys(fr.json).join(",") : fr.text);
-const forms = fr.json?.forms ?? [];
-console.log(`\n=== ${forms.length} FORMS ===`);
-const semClient = [];
-for (const f of forms) {
-  await sleep(200);
-  const d = await get(`/forms/${f.id}/submissions?page=1&limit=3`);
-  const subs = d.json?.submissions ?? [];
-  const total = d.json?.totalNumberOfSubmissionsPerFilter ?? subs.length;
-  let client;
-  for (const s of subs) { const c = findClient(s); if (c !== undefined) { client = c; break; } }
-  const flag = client !== undefined ? `client="${clip(client,30)}"` : (subs.length ? "SEM client" : "sem submissões");
-  console.log(`  ${f.id} | ${clip(f.name,40)} | subs=${total} | ${flag}`);
-  if (client === undefined && subs.length) semClient.push({ f, d: d.json });
-}
-
-// deep-dive: primeira form COM submissões mas SEM client hidden
-console.log(`\n=== ${semClient.length} forms com submissões mas SEM campo client ===`);
-const dd = semClient[0];
-if (dd) {
-  console.log(`Deep-dive: ${dd.f.id} | ${dd.f.name}`);
-  const qmap = {}; (dd.d.questions ?? []).forEach((q) => { qmap[q.id] = q.title ?? q.label; });
-  const s0 = (dd.d.submissions ?? [])[0];
-  console.log("submission keys:", Object.keys(s0 ?? {}).join(", "));
-  (s0?.responses ?? []).slice(0, 25).forEach((r) => {
-    const a = r.answer;
-    const av = a && typeof a === "object" ? JSON.stringify(a) : a;
-    console.log(`  ${r.questionId} | ${clip(qmap[r.questionId] ?? "?", 38)} = ${clip(av, 40)}`);
-  });
+  // e as respostas das perguntas tipo cliente
+  for (const q of clientQs) {
+    const r = (s0.responses ?? []).find((x) => x.questionId === q.id);
+    console.log(`  [Q] ${clip(q.title ?? q.label, 25)} = ${JSON.stringify(r?.answer)}`);
+  }
 }
