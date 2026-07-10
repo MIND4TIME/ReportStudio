@@ -1,0 +1,5 @@
+# Segredos e artefactos locais — nunca commitar
+.env
+.env.*
+*.ndjson
+*.csv
