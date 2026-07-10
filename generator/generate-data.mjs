@@ -27,10 +27,16 @@ const dryRun = process.argv.includes("--dry-run");
 const headers = { Authorization: `Bearer ${TOKEN}` };
 
 // ------------------------- API do Tally -------------------------
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+const clip = (s, n = 42) => String(s ?? "").replace(/\s+/g, " ").slice(0, n);
 async function api(path) {
-  const res = await fetch(`${API}${path}`, { headers });
-  if (!res.ok) throw new Error(`GET ${path} → ${res.status}: ${await res.text()}`);
-  return res.json();
+  for (let i = 0; i < 4; i++) {
+    const res = await fetch(`${API}${path}`, { headers });
+    if (res.status === 429) { await sleep(1500); continue; }
+    if (!res.ok) throw new Error(`GET ${path} → ${res.status}: ${await res.text()}`);
+    return res.json();
+  }
+  throw new Error(`GET ${path} → 429 (rate limit) após retries`);
 }
 async function listForms() {
   const out = [];
@@ -42,15 +48,18 @@ async function listForms() {
   }
   return out;
 }
-async function listSubmissions(formId) {
-  const out = [];
+// Devolve { qmap: {questionId->texto}, submissions: [...] } para uma form.
+async function fetchFormData(formId) {
+  const qmap = {};
+  const submissions = [];
   for (let page = 1; ; page++) {
     const d = await api(`/forms/${formId}/submissions?page=${page}&limit=100`);
+    (d.questions ?? []).forEach((q) => { qmap[q.id] = q.title ?? q.label ?? ""; });
     const items = d.submissions ?? d.items ?? [];
-    out.push(...items);
+    submissions.push(...items);
     if (!d.hasMore || !items.length) break;
   }
-  return out;
+  return { qmap, submissions };
 }
 
 // ------------------------- Normalização -------------------------
@@ -94,26 +103,30 @@ export function deriveSectionLang(form) {
   return { section, lang: langM ? langM[1].toLowerCase() : null };
 }
 
-// PROVISÓRIO: adaptar ao formato real assim que virmos 1 submissão via API.
-// Espera-se que cada submissão tenha um array de respostas {key,label,value}.
-function flattenSubmission(form, sub) {
-  const fields = sub.responses ?? sub.fields ?? [];
-  const rawField = fields.find((f) => /client_raw/i.test(f.key ?? "") || /client_raw/i.test(f.label ?? ""));
-  const { client, program, turma, client_info } = parseClientRaw(rawField?.value);
-  const { section, lang } = deriveSectionLang(form);
-  const formProgram = CONFIG.formOverrides?.[form.id]?.program ?? program;
+// Formato real da API: cada submissão tem `responses: [{questionId, answer}]`.
+// O client_raw vem de um campo escondido cujo answer é um objeto com `client`.
+const isClientField = (a) => a && typeof a === "object" && !Array.isArray(a) && "client" in a;
+const toVal = (a) => Array.isArray(a) ? a.join("; ") : (a && typeof a === "object") ? JSON.stringify(a) : (a != null ? String(a) : null);
 
-  return fields
-    .filter((f) => !/client_raw/i.test(f.key ?? "") && !/client_raw/i.test(f.label ?? ""))
-    .map((f) => ({
-      "Submission ID": sub.id ?? sub.submissionId,
+function flattenSubmission(form, qmap, sub) {
+  const { section, lang } = deriveSectionLang(form);
+  const responses = sub.responses ?? [];
+  const clientRaw = responses.map((r) => r.answer).find(isClientField)?.client ?? "";
+  const p = parseClientRaw(clientRaw);
+  const formProgram = CONFIG.formOverrides?.[form.id]?.program ?? p.program;
+
+  const rows = responses
+    .filter((r) => !isClientField(r.answer))
+    .map((r) => ({
+      "Submission ID": sub.id,
       "Respondent ID": sub.respondentId ?? null,
       "Submitted at": sub.submittedAt ?? sub.createdAt ?? null,
-      client, program: formProgram, turma, client_info,
+      client: p.client, program: formProgram, turma: p.turma, client_info: p.client_info,
       section, lang,
-      question: f.label,
-      value: f.value != null ? String(f.value) : null,
+      question: qmap[r.questionId] ?? "",
+      value: toVal(r.answer),
     }));
+  return { rows, hasClient: clientRaw !== "" };
 }
 
 // ------------------------------ Main ------------------------------
@@ -123,16 +136,27 @@ async function main() {
   console.log(`Forms: ${forms.length}`);
 
   const rows = [];
-  let unmapped = 0;
+  const noSection = [], noClient = [];
   for (const form of forms) {
-    const { section, lang } = deriveSectionLang(form);
-    if (!section) { unmapped++; console.warn(`  sem secção (form "${form.name}") — precisa de override`); }
-    const subs = await listSubmissions(form.id);
-    for (const sub of subs) rows.push(...flattenSubmission(form, sub));
-    console.log(`  ${form.name}: ${subs.length} submissões · secção=${section ?? "?"} lang=${lang ?? "?"}`);
+    await sleep(150);
+    const { section } = deriveSectionLang(form);
+    const { qmap, submissions } = await fetchFormData(form.id);
+    let withClient = 0;
+    for (const sub of submissions) {
+      const { rows: r, hasClient } = flattenSubmission(form, qmap, sub);
+      rows.push(...r);
+      if (hasClient) withClient++;
+    }
+    if (!section) noSection.push(form.name);
+    if (submissions.length && withClient === 0) noClient.push(form.name);
+    console.log(`  ${clip(form.name)} · subs=${submissions.length} · secção=${section ?? "?"} · c/client=${withClient}`);
   }
 
-  console.log(`\nTotal de linhas: ${rows.length} · forms sem secção: ${unmapped}`);
+  const distinct = (k) => new Set(rows.map((r) => r[k]).filter(Boolean)).size;
+  console.log(`\nTotal de linhas: ${rows.length}`);
+  console.log(`clientes=${distinct("client")} · programas=${distinct("program")} · turmas=${distinct("turma")} · secções=${[...new Set(rows.map((r) => r.section))].join(",")}`);
+  console.log(`Forms sem secção (${noSection.length}): ${noSection.map(clip).join(" | ")}`);
+  console.log(`Forms c/ submissões mas SEM client (${noClient.length}): ${noClient.map(clip).join(" | ")}`);
   if (rows[0]) console.log("Exemplo:", JSON.stringify(rows[0]));
 
   if (dryRun) { console.log("\n[dry-run] Nada foi escrito."); return; }
