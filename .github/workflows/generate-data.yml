@@ -1,16 +1,19 @@
 name: Gerar data.json (Tally)
 
-# Puxa as submissões de todas as forms do Tally, normaliza e (opcional)
-# commita o data.json. Enquanto validamos, corre só MANUALMENTE e em
-# dry-run por omissão — não escreve nada. O agendamento liga-se depois.
+# Puxa as submissões de todas as forms do Tally, normaliza e (conforme o modo)
+# escreve o data.json. Enquanto validamos corre só MANUALMENTE.
+#   dry-run  → não escreve nada (só relatório no log)
+#   preview  → escreve e faz push para o branch data-preview (main fica intocado)
+#   live     → escreve e commita no branch atual (produção)
 
 on:
   workflow_dispatch:
     inputs:
-      write:
-        description: "Escrever e commitar o data.json? (deixa 'false' para testar)"
-        type: boolean
-        default: false
+      mode:
+        description: "Modo"
+        type: choice
+        options: [dry-run, preview, live]
+        default: dry-run
   # schedule:                # ligar depois de validado
   #   - cron: "0 * * * *"
 
@@ -27,13 +30,26 @@ jobs:
           node-version: "20"
 
       - name: Gerar (dry-run)
-        if: ${{ inputs.write == false }}
+        if: ${{ inputs.mode == 'dry-run' }}
         env:
           TALLY_API_KEY: ${{ secrets.TALLY_API_KEY }}
         run: node generator/generate-data.mjs --dry-run
 
-      - name: Gerar e commitar
-        if: ${{ inputs.write == true }}
+      - name: Gerar → branch data-preview
+        if: ${{ inputs.mode == 'preview' }}
+        env:
+          TALLY_API_KEY: ${{ secrets.TALLY_API_KEY }}
+        run: |
+          node generator/generate-data.mjs
+          git config user.name  "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git checkout -B data-preview
+          git add data.json
+          git commit -m "Preview do data.json (Tally) — não é produção"
+          git push -f origin data-preview
+
+      - name: Gerar e commitar (produção)
+        if: ${{ inputs.mode == 'live' }}
         env:
           TALLY_API_KEY: ${{ secrets.TALLY_API_KEY }}
         run: |
