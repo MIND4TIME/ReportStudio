@@ -1232,7 +1232,7 @@
                 root.appendChild(gp);
                 window.__chartCtx[chartId] = {
                   section:sec, turmaCount:byT.length, title:'Global', rawRows:numeric, LM, OM,
-                  editable:false,
+                  editable:true,
                   orientation:(sec==='evaluation'?'horizontal':'vertical'),
                   barWidth:(sec==='evaluation'?35:30),
                   totalResponses: totalResponsesGlobal
@@ -1258,7 +1258,7 @@
                 root.appendChild(page);
                 window.__chartCtx[chartId] = {
                   section:sec, turmaCount:byT.length, title:turma, rawRows:values, LM, OM,
-                  editable:false,
+                  editable:true,
                   orientation:(sec==='evaluation'?'horizontal':'vertical'),
                   barWidth:(sec==='evaluation'?35:30),
                   totalResponses: totalResponsesTurma
